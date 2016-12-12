@@ -2,7 +2,6 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from django.contrib.sites.shortcuts import get_current_site
-from django.utils.translation import ugettext as _
 from cms.models import Page, Placeholder, CMSPlugin
 from menus.menu_pool import menu_pool
 from rest_framework import mixins
@@ -11,8 +10,9 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
 from djangocms_rest_api.serializers import (
-    PageSerializer, PlaceHolderSerializer, BasePluginSerializer, get_serializer_class, MenuSerializer
+    PageSerializer, PlaceHolderSerializer, BasePluginSerializer, get_serializer, get_serializer_class, MenuSerializer
 )
+from djangocms_rest_api.views.utils import QuerysetMixin
 from djangocms_rest_api.views.utils import check_if_page_is_visible
 
 
@@ -30,7 +30,7 @@ class MenuViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         return nodes
 
 
-class PageViewSet(viewsets.ReadOnlyModelViewSet):
+class PageViewSet(QuerysetMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = PageSerializer
     queryset = Page.objects.all()
 
@@ -42,41 +42,24 @@ class PageViewSet(viewsets.ReadOnlyModelViewSet):
             return Page.objects.public().on_site(site=site).distinct()
 
 
-class PlaceHolderViewSet(mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    """
-        Do not use list for now, add later if required
-    """
-    queryset = Placeholder.objects.all()
+class PlaceHolderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PlaceHolderSerializer
-    parser_classes = (JSONParser, FormParser, MultiPartParser)
+    queryset = Placeholder.objects.all()
 
-    def get_object(self):
-        obj = super(PlaceHolderViewSet, self).get_object()
-        page = obj.page
-        if not page:
-            raise PermissionDenied()
-        is_visible = check_if_page_is_visible(self.request, page)
-        if not is_visible:
-            raise PermissionDenied(_('You are not allowed to se this page'))
-        return obj
+    def get_queryset(self):
+        site = get_current_site(self.request)
+        if self.request.user.is_staff:
+            return Placeholder.objects.filter(page__publisher_is_draft=True, page__site=site).distinct()
+        else:
+            return Placeholder.objects.filter(page__publisher_is_draft=False, page__site=site).distinct()
 
 
-class PluginViewSet(mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    """
-        Do not use list for now, add later if required
-    """
+class PluginViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = BasePluginSerializer
     queryset = CMSPlugin.objects.all()
 
     def get_object(self):
         obj = super(PluginViewSet, self).get_object()
-        page = obj.placeholder.page
-        if not page:
-            raise PermissionDenied()
-        is_visible = check_if_page_is_visible(self.request, page)
-        if not is_visible:
-            raise PermissionDenied(_('You are not allowed to se this page'))
-
         instance, plugin = obj.get_plugin_instance()
         return instance
 
@@ -84,9 +67,6 @@ class PluginViewSet(mixins.RetrieveModelMixin, viewsets.GenericViewSet):
         # TODO: decide if we need custom serializer here
         if self.action == 'retrieve':
             obj = self.get_object()
-            # Do not use model here, since it replaces base serializer with quite limited one, created from model
+            # Do not use model here, since it replace base serializer with quire limited created from model
             return get_serializer_class(plugin=obj.get_plugin_class())
         return super(PluginViewSet, self).get_serializer_class()
-
-
-
